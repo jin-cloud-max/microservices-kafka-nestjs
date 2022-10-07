@@ -1,0 +1,72 @@
+import { HttpException, HttpStatus, Injectable } from '@nestjs/common';
+import { PrismaService } from '../database/prisma/prisma.service';
+import { KafkaService } from '../messaging/kafka.service';
+
+type CreatePurcaseParams = {
+  productId: string;
+  customerId: string;
+};
+
+@Injectable()
+class PurchasesService {
+  constructor(private prisma: PrismaService, private kafka: KafkaService) {}
+
+  async listAllPurchases() {
+    return this.prisma.purchase.findMany({
+      orderBy: {
+        createdAt: 'desc',
+      },
+    });
+  }
+
+  async listAllFromCustomer(customerId: string) {
+    return this.prisma.purchase.findMany({
+      where: {
+        customerId,
+      },
+      orderBy: {
+        createdAt: 'desc',
+      },
+    });
+  }
+
+  async createPurchase({ customerId, productId }: CreatePurcaseParams) {
+    const product = await this.prisma.product.findUnique({
+      where: {
+        id: productId,
+      },
+    });
+
+    if (!product) {
+      throw new HttpException('NotFound', HttpStatus.NOT_FOUND);
+    }
+
+    const purchases = await this.prisma.purchase.create({
+      data: {
+        customerId,
+        productId,
+      },
+    });
+
+    const customer = await this.prisma.customer.findUnique({
+      where: {
+        id: customerId,
+      },
+    });
+
+    this.kafka.emit('purchases.new-purchase', {
+      customer: {
+        authUserId: customer.authUserId,
+      },
+      product: {
+        id: product.id,
+        title: product.title,
+        slug: product.slug,
+      },
+    });
+
+    return purchases;
+  }
+}
+
+export { PurchasesService };
